@@ -4,6 +4,7 @@ import asyncio
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
 from pymongo import MongoClient
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ✅ Enable logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -21,6 +22,22 @@ users_col = db["users"]
 
 # ✅ Initialize Bot
 bot = Bot(token=TOKEN)
+
+# ✅ Dummy Health Check Server (Required for Koyeb)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_check_server():
+    server = HTTPServer(("0.0.0.0", 8000), HealthCheckHandler)
+    server.serve_forever()
+
+# Start the health check server in a separate thread
+health_thread = threading.Thread(target=run_health_check_server, daemon=True)
+health_thread.start()
 
 # ✅ Function to Forward New Channel Messages
 async def forward_channel_post(update: Update, context: CallbackContext):
