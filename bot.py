@@ -60,7 +60,6 @@ async def show_menu(update: Update, context: CallbackContext):
     if str(update.message.chat_id) in ADMINS:
         commands += "\n👑 Admin Commands:\n"
         commands += "/usercount - Get User Count\n"
-        commands += "/banuser <user_id> - Ban a User\n"
     await update.message.reply_text(commands)
     await delete_message(update)
 
@@ -89,7 +88,6 @@ def main():
     app.add_handler(CommandHandler("getall", get_old_messages))
     app.add_handler(CommandHandler("menu", show_menu))
     app.add_handler(CommandHandler("usercount", get_user_count))
-    app.add_handler(CommandHandler("banuser", ban_user, pass_args=True))
     app.add_handler(MessageHandler(filters.Chat(CHANNEL_ID), forward_channel_post))
 
     # Run the bot
