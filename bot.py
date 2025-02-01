@@ -58,16 +58,19 @@ async def start(update: Update, context: CallbackContext):
     await update.message.reply_text("✅ Welcome! Use /menu to see available commands.")
     await delete_message(update)
 
-# ✅ Get All Old Messages from Channel
 async def get_old_messages(update: Update, context: CallbackContext):
-    user_id = update.message.chat_id
-    messages = context.bot.get_chat(CHANNEL_ID).get_history()
+    user_id = update.message.from_user.id
+    if is_banned(user_id):
+        return
+
+    chat = await context.bot.get_chat(CHANNEL_ID)  # Await chat retrieval
+    messages = await chat.get_history()  # Await message history
+
     for msg in messages:
-        try:
-            await bot.copy_message(chat_id=user_id, from_chat_id=CHANNEL_ID, message_id=msg.message_id)
-        except Exception as e:
-            logging.error(f"Error sending old messages: {e}")
-    await delete_message(update)
+        await context.bot.send_message(chat_id=user_id, text=msg.text)
+
+    await update.message.delete()  # Auto-delete user message
+
 
 # ✅ Show Bot Commands
 async def show_menu(update: Update, context: CallbackContext):
