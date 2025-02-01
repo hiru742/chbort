@@ -1,30 +1,36 @@
-import logging
 import os
+import logging
 import asyncio
-from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
-from pymongo import MongoClient
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from dotenv import load_dotenv
+from pymongo import MongoClient
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, filters, CallbackContext
+)
 
-# ✅ Enable logging
+# Load environment variables
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+MONGO_URI = os.getenv("MONGO_URI")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
+ADMIN_IDS = list(map(int, os.getenv("ADMINS", "").split(",")))  # Convert to list of integers
+
+# Setup logging
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ✅ Environment Variables
-TOKEN = os.getenv("BOT_TOKEN")  # Telegram Bot Token
-MONGO_URI = os.getenv("MONGO_URI")  # MongoDB Connection
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # Forwarding Channel ID (Use negative ID)
-ADMINS = os.getenv("ADMINS", "").split(",")  # List of Admin User IDs
-
-# ✅ Database Connection
+# MongoDB setup
 client = MongoClient(MONGO_URI)
 db = client["telegram_bot"]
-users_col = db["users"]
+users_collection = db["users"]
+messages_collection = db["messages"]
 
-# ✅ Initialize Bot
-bot = Bot(token=TOKEN)
+# Initialize bot application
+app = Application.builder().token(BOT_TOKEN).build()
 
-# ✅ Dummy Health Check Server (Required for Koyeb)
+# ✅ Health Check Server (Required for Koyeb)
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -36,80 +42,79 @@ def run_health_check_server():
     server = HTTPServer(("0.0.0.0", 8000), HealthCheckHandler)
     server.serve_forever()
 
-# Start the health check server in a separate thread
-health_thread = threading.Thread(target=run_health_check_server, daemon=True)
-health_thread.start()
+# Run health check in background
+threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# ✅ Function to Forward New Channel Messages
-async def forward_channel_post(update: Update, context: CallbackContext):
-    if update.channel_post:
-        message = update.channel_post
-        users = users_col.find()
-        for user in users:
-            try:
-                await bot.copy_message(chat_id=user["_id"], from_chat_id=message.chat_id, message_id=message.message_id)
-            except Exception as e:
-                logging.error(f"Error forwarding to {user['_id']}: {e}")
+# ✅ Register Users
+async def register_user(user_id):
+    if not users_collection.find_one({"user_id": user_id}):
+        users_collection.insert_one({"user_id": user_id})
 
-# ✅ Start Command - Register User & Show Menu
+# ✅ Command: /start
 async def start(update: Update, context: CallbackContext):
-    user_id = update.message.chat_id
-    users_col.update_one({"_id": user_id}, {"$set": {"_id": user_id}}, upsert=True)
-    await update.message.reply_text("✅ Welcome! Use /menu to see available commands.")
-    await delete_message(update)
-
-async def get_old_messages(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
-    chat = await context.bot.get_chat(CHANNEL_ID)  # Await chat retrieval
-    messages = await chat.get_history()  # Await message history
+    await register_user(user_id)
+    await update.message.reply_text("Welcome! Use /getall to get old messages. Use /menu for commands.")
+    await update.message.delete()
+
+# ✅ Command: Get Old Messages
+async def get_all_messages(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    messages = messages_collection.find().sort("_id", 1)
 
     for msg in messages:
-        await context.bot.send_message(chat_id=user_id, text=msg.text)
+        await context.bot.send_message(chat_id=user_id, text=msg["text"])
 
-    await update.message.delete()  # Auto-delete user message
+    await update.message.delete()
 
+# ✅ Forward Channel Posts to Users
+async def forward_channel_post(update: Update, context: CallbackContext):
+    message_text = update.channel_post.text or update.channel_post.caption
+    if not message_text:
+        return
 
-# ✅ Show Bot Commands
-async def show_menu(update: Update, context: CallbackContext):
-    commands = "📌 Available Commands:\n"
-    commands += "/start - Register & Receive Updates\n"
-    commands += "/getall - Retrieve Old Messages\n"
-    commands += "/menu - Show Commands\n"
-    if str(update.message.chat_id) in ADMINS:
-        commands += "\n👑 Admin Commands:\n"
-        commands += "/usercount - Get User Count\n"
+    messages_collection.insert_one({"text": message_text})  # Store in DB
+    users = users_collection.find()
+    
+    for user in users:
+        try:
+            await context.bot.send_message(chat_id=user["user_id"], text=message_text)
+        except Exception as e:
+            logger.warning(f"Failed to send message to {user['user_id']}: {e}")
+
+# ✅ Command: User Count (Admin Only)
+async def user_count(update: Update, context: CallbackContext):
+    if update.message.from_user.id in ADMIN_IDS:
+        count = users_collection.count_documents({})
+        await update.message.reply_text(f"Total Users: {count}")
+        await update.message.delete()
+
+# ✅ Command: Show Menu
+async def menu(update: Update, context: CallbackContext):
+    commands = """
+Available Commands:
+/getall - Get old messages
+/menu - Show this menu
+
+(Admins)
+/usercount - Get total users
+    """
     await update.message.reply_text(commands)
-    await delete_message(update)
+    await update.message.delete()
 
-# ✅ Get User Count (Admin Only)
-async def get_user_count(update: Update, context: CallbackContext):
-    if str(update.message.chat_id) in ADMINS:
-        count = users_col.count_documents({})
-        await update.message.reply_text(f"👥 Total Users: {count}")
-    await delete_message(update)
+# ✅ Auto-delete user messages
+async def delete_user_messages(update: Update, context: CallbackContext):
+    await update.message.delete()
 
+# ✅ Add Handlers
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("getall", get_all_messages))
+app.add_handler(CommandHandler("menu", menu))
+app.add_handler(CommandHandler("usercount", user_count))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, delete_user_messages))
+app.add_handler(MessageHandler(filters.Chat(CHANNEL_ID) & filters.ALL, forward_channel_post))
 
-# ✅ Delete User Messages
-async def delete_message(update: Update):
-    try:
-        await asyncio.sleep(2)  # Wait before deletion
-        await bot.delete_message(chat_id=update.message.chat_id, message_id=update.message.message_id)
-    except:
-        pass
-
-# ✅ Main Function
-def main():
-    app = Application.builder().token(TOKEN).build()
-
-    # Handlers
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("getall", get_old_messages))
-    app.add_handler(CommandHandler("menu", show_menu))
-    app.add_handler(CommandHandler("usercount", get_user_count))
-    app.add_handler(MessageHandler(filters.Chat(CHANNEL_ID), forward_channel_post))
-
-    # Run the bot
-    app.run_polling()
-
+# ✅ Start the bot
 if __name__ == "__main__":
-    main()
+    print("Bot is running...")
+    app.run_polling()
