@@ -1,4 +1,3 @@
 python-telegram-bot==20.3
-pymongo
-dnspython
-python-dotenv
+psycopg2-binary==2.9.6
+redis==4.5.5
