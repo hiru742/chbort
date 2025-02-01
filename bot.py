@@ -60,9 +60,6 @@ async def start(update: Update, context: CallbackContext):
 
 async def get_old_messages(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
-    if is_banned(user_id):
-        return
-
     chat = await context.bot.get_chat(CHANNEL_ID)  # Await chat retrieval
     messages = await chat.get_history()  # Await message history
 
