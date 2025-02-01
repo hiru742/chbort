@@ -69,18 +69,26 @@ async def get_all_messages(update: Update, context: CallbackContext):
 
 # ✅ Forward Channel Posts to Users
 async def forward_channel_post(update: Update, context: CallbackContext):
-    message_text = update.channel_post.text or update.channel_post.caption
-    if not message_text:
-        return
+    if update.channel_post:
+        message_text = update.channel_post.text or update.channel_post.caption
+        if not message_text:
+            return
+        
+        # Log the incoming message
+        logger.info(f"Forwarding new message: {message_text}")
 
-    messages_collection.insert_one({"text": message_text})  # Store in DB
-    users = users_collection.find()
-    
-    for user in users:
-        try:
-            await context.bot.send_message(chat_id=user["user_id"], text=message_text)
-        except Exception as e:
-            logger.warning(f"Failed to send message to {user['user_id']}: {e}")
+        # Save message to database
+        messages_collection.insert_one({"text": message_text})  # Store in DB
+
+        # Forward message to users
+        users = users_collection.find()
+
+        for user in users:
+            try:
+                await context.bot.send_message(chat_id=user["user_id"], text=message_text)
+                logger.info(f"Message forwarded to {user['user_id']}")
+            except Exception as e:
+                logger.warning(f"Failed to send message to {user['user_id']}: {e}")
 
 # ✅ Command: User Count (Admin Only)
 async def user_count(update: Update, context: CallbackContext):
