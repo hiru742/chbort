@@ -71,17 +71,6 @@ async def get_user_count(update: Update, context: CallbackContext):
         await update.message.reply_text(f"👥 Total Users: {count}")
     await delete_message(update)
 
-# ✅ Ban User (Admin Only)
-async def ban_user(update: Update, context: CallbackContext):
-    if str(update.message.chat_id) in ADMINS:
-        args = context.args
-        if not args:
-            await update.message.reply_text("❌ Usage: /banuser <user_id>")
-            return
-        user_id = int(args[0])
-        users_col.delete_one({"_id": user_id})
-        await update.message.reply_text(f"✅ Banned User: {user_id}")
-    await delete_message(update)
 
 # ✅ Delete User Messages
 async def delete_message(update: Update):
